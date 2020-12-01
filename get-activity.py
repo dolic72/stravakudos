@@ -4,7 +4,7 @@ import pandas as pd
 from pandas import json_normalize
 import json
 import csv
-import numpy
+import numpy as np
 
 
 # Make Strava auth API call with your 
@@ -14,10 +14,14 @@ response = requests.post(
                     data = {
                             'client_id': 54544,
                             'client_secret': '3f5e522edca619c8b4432d59805d28d82839ed07',
-                            'code': '8e17d122de30160ff05c7fca28c6efcf885af3e5',
+                            'code': '8ca0c4766ddad1af1de6dec03ef60ca74622d62f',
                             'grant_type': 'authorization_code'
                             }
                 )
+
+### Different approach to be evaluated:
+### https://github.com/mandieq/strava_related/blob/master/stravalib_sample.ipynb 
+
 
 #Save json response as a variable
 strava_tokens = response.json()
@@ -42,7 +46,8 @@ url = "https://www.strava.com/api/v3/activities"
 access_token = strava_tokens['access_token']
 
 # Get first page of activities from Strava with all fields
-r = requests.get(url + '?access_token=' + access_token + '&per_page=200')
+nacts = 1 # number of activities to fetch
+r = requests.get(url + '?access_token=' + access_token + '&per_page=' + str(nacts))
 r = r.json()
     
 df = json_normalize(r)
@@ -62,3 +67,6 @@ for thisid in act_ids:
     kudoers_current = pd.concat([kudoers_current, kudoers], axis=0)
 
 kudoers_current.to_csv('kudoers_with_activity_id.csv')
+
+
+# Get streaming data
