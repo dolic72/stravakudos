@@ -3,53 +3,47 @@ import datetime
 import pickle
 import pandas as pd
 import numpy as np
+import json
+import csv
+import requests
 from stravalib.client import Client
-
-import gpxpy
-import gpxpy.gpx
 
 client = Client()
 
-MY_STRAVA_CLIENT_ID, MY_STRAVA_CLIENT_SECRET = open('client.secret').read().strip().split(',')
-print ('Client ID and secret read from file'.format(MY_STRAVA_CLIENT_ID) )
+# MY_STRAVA_CLIENT_ID, MY_STRAVA_CLIENT_SECRET = open('client.secret').read().strip().split(',')
+# print ('Client ID and secret read from file'.format(MY_STRAVA_CLIENT_ID) )
 
-url = client.authorization_url(client_id=MY_STRAVA_CLIENT_ID, redirect_uri='http://127.0.0.1:5000/authorization', scope=['read_all','profile:read_all','activity:read_all'])
-import urllib.parse
-urllib.parse.unquote(url)
+# url = client.authorization_url(client_id=MY_STRAVA_CLIENT_ID, redirect_uri='http://127.0.0.1:5000/authorization', scope=['read_all','profile:read_all','activity:read_all'])
+# import urllib.parse
+# urllib.parse.unquote(url)
 
-CODE = '5e8322f66a1311bc245c2f1090964094981bac60'
+# CODE = '8d46ff9a7def9d54a0eaf7c1dae1cb62cc7ac203'
 
-access_token = client.exchange_code_for_token(client_id=MY_STRAVA_CLIENT_ID, 
-client_secret=MY_STRAVA_CLIENT_SECRET, 
-code=CODE)
+# access_token = client.exchange_code_for_token(client_id=MY_STRAVA_CLIENT_ID, 
+# client_secret=MY_STRAVA_CLIENT_SECRET, 
+# code=CODE)
 
+# store API credentials
+with open('.secret/api_credentials.json', 'r') as f:
+    api_credentials = json.load(f)
+    client_id = api_credentials['client_id']
+    client_secret = api_credentials['client_secret']
+    refresh_token = api_credentials['refresh_token']
 
-## Read access token from file
-with open('../access_token.pickle', 'wb') as f:
-    pickle.dump(access_token, f)
+# make POST request to Strava API
+req = requests.post("https://www.strava.com/oauth/token?client_id={}&client_secret={}&refresh_token={}&grant_type=refresh_token".format(client_id, client_secret, refresh_token)).json()
 
-# Refresh access token if necessary
-if time.time() > access_token['expires_at']:
-    print('Token has expired, will refresh')
-    refresh_response = client.refresh_access_token(client_id=MY_STRAVA_CLIENT_ID, 
-                                               client_secret=MY_STRAVA_CLIENT_SECRET, 
-                                               refresh_token=access_token['refresh_token'])
-    access_token = refresh_response
-    with open('../access_token.pickle', 'wb') as f:
-        pickle.dump(refresh_response, f)
-    print('Refreshed token saved to file')
+# update API credentials file
+api_credentials['access_token'] = req['access_token']
+api_credentials['refresh_token'] = req['refresh_token']
 
-    client.access_token = refresh_response['access_token']
-    client.refresh_token = refresh_response['refresh_token']
-    client.token_expires_at = refresh_response['expires_at']
-        
-else:
-    print('Token still valid, expires at {}'
-          .format(time.strftime("%a, %d %b %Y %H:%M:%S %Z", time.localtime(access_token['expires_at']))))
+with open('.secret/api_credentials.json', 'w') as f:
+    json.dump(api_credentials, f)
 
-    client.access_token = access_token['access_token']
-    client.refresh_token = access_token['refresh_token']
-    client.token_expires_at = access_token['expires_at']
+# store new access token
+client.access_token = api_credentials['access_token']
+client.refresh_token = api_credentials['refresh_token']
+client.token_expires_at = api_credentials['expires_at']
 
 athlete = client.get_athlete()
 # All fields
@@ -100,42 +94,17 @@ def get_activities(date_since):
 
 def get_gear_names(activity_meta):
     gearid = activity_meta['gear_id']
+    fields = ['id', 'name', 'brand_name']
+    df_ret = pd.DataFrame()
     for thisid in gearid:
         gear_data = client.get_gear(thisid)
-        # iterativ dict erzeugen (d = {"name":gear_data.name})
+        df = pd.DataFrame([{fn: getattr(gear_data, fn) for fn in fields}])
+        dst = getattr(gear_data, "distance")
+        df['distance'] = [dst.num]
+        df = df.reset_index(drop=True)
+        df_ret = pd.concat([df_ret, df], axis=0)
+    return df_ret
 
 
-def create_gpx(activity_meta):
-    activity_ids = activity_meta['id']
-    # types = ['time', 'distance', 'latlng', 'altitude', 'velocity_smooth', 'moving', 'grade_smooth', 'heartrate']
-    types = ['time', 'latlng', 'altitude']
-    for thisid in activity_ids:
-        activity_data=client.get_activity_streams(thisid, types=types)
-        # get start time for this activity
-        starttime = activity_meta[activity_meta['id'] == thisid]['start_date'].values[0]
-
-        ### Create gpx output
-        gpx = gpxpy.gpx.GPX()
-
-        # Create first track in our GPX:
-        gpx_track = gpxpy.gpx.GPXTrack()
-        gpx.tracks.append(gpx_track)
-
-        # Create first segment in our GPX track:
-        gpx_segment = gpxpy.gpx.GPXTrackSegment()
-        gpx_track.segments.append(gpx_segment)
-
-        for i in range(len(activity_data['time'].data)):
-            lat = activity_data['latlng'].data[i][0]
-            lon = activity_data['latlng'].data[i][1]
-            ele = activity_data['altitude'].data[i]
-            ts = pd.to_datetime(starttime) + datetime.timedelta(0, activity_data['time'].data[i])
-            gpx_segment.points.append(gpxpy.gpx.GPXTrackPoint(lat, lon, elevation=ele, time=ts))
-
-        filename = "strava_id_" + str(thisid) + ".gpx"
-        with open(filename, "w") as f:
-            f.write( gpx.to_xml())
-        print("Generated file " + filename)
 
 my_activities = get_activities("2020-12-01 00:00:00")
-create_gpx(my_activities)
