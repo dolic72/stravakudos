@@ -17,7 +17,7 @@ url = client.authorization_url(client_id=MY_STRAVA_CLIENT_ID, redirect_uri='http
 import urllib.parse
 urllib.parse.unquote(url)
 
-CODE = '0f7c5fc7c0d7f715cbc13175e515a097eabf4b64'
+CODE = '5e8322f66a1311bc245c2f1090964094981bac60'
 
 access_token = client.exchange_code_for_token(client_id=MY_STRAVA_CLIENT_ID, 
 client_secret=MY_STRAVA_CLIENT_SECRET, 
@@ -102,6 +102,7 @@ def get_gear_names(activity_meta):
     gearid = activity_meta['gear_id']
     for thisid in gearid:
         gear_data = client.get_gear(thisid)
+        # iterativ dict erzeugen (d = {"name":gear_data.name})
 
 
 def create_gpx(activity_meta):
@@ -136,5 +137,5 @@ def create_gpx(activity_meta):
             f.write( gpx.to_xml())
         print("Generated file " + filename)
 
-my_activities = get_activities("2020-09-12 00:00:00")
+my_activities = get_activities("2020-12-01 00:00:00")
 create_gpx(my_activities)
