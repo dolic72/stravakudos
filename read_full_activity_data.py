@@ -12,19 +12,6 @@ from stravalib.client import Client
 
 client = Client()
 
-# MY_STRAVA_CLIENT_ID, MY_STRAVA_CLIENT_SECRET = open('client.secret').read().strip().split(',')
-# print ('Client ID and secret read from file'.format(MY_STRAVA_CLIENT_ID) )
-
-# url = client.authorization_url(client_id=MY_STRAVA_CLIENT_ID, redirect_uri='http://127.0.0.1:5000/authorization', scope=['read_all','profile:read_all','activity:read_all'])
-# import urllib.parse
-# urllib.parse.unquote(url)
-
-# CODE = '8d46ff9a7def9d54a0eaf7c1dae1cb62cc7ac203'
-
-# access_token = client.exchange_code_for_token(client_id=MY_STRAVA_CLIENT_ID, 
-# client_secret=MY_STRAVA_CLIENT_SECRET, 
-# code=CODE)
-
 # store API credentials
 with open('.secret/api_credentials.json', 'r') as f:
     api_credentials = json.load(f)
@@ -47,7 +34,7 @@ client.access_token = api_credentials['access_token']
 client.refresh_token = api_credentials['refresh_token']
 client.token_expires_at = api_credentials['expires_at']
 
-athlete = client.get_athlete()
+# athlete = client.get_athlete()
 # All fields
 # athlete.to_dict()
 
@@ -95,7 +82,7 @@ def get_activities(date_since):
     return df_perm
 
 def get_gear_names(activity_meta):
-    gearid = activity_meta['gear_id']
+    gearid = activity_meta.gear_id.unique()
     fields = ['id', 'name', 'brand_name']
     df_ret = pd.DataFrame()
     for thisid in gearid:
@@ -107,7 +94,7 @@ def get_gear_names(activity_meta):
         df_ret = pd.concat([df_ret, df], axis=0)
     return df_ret
 
-# store database credentials
+# database credentials
 with open('.secret/postgres_credentials.json', 'r') as f:
     postgres_credentials = json.load(f)
     host = postgres_credentials['host']
@@ -115,52 +102,34 @@ with open('.secret/postgres_credentials.json', 'r') as f:
     user = postgres_credentials['user']
     password = postgres_credentials['password']
 
-# open connection to database
-conn = psycopg2.connect(host=host, database=database, user=user, password=password)# create cursor object
-cur = conn.cursor()
 
-# write SQL query
-create_table_query = """
-CREATE TABLE activities (
-    id BIGINT PRIMARY KEY,
-    name CHARACTER VARYING(255) NOT NULL,
-    start_date_local CHARACTER(64) NOT NULL,
-    start_date CHARACTER(64) NOT NULL,
-    type CHARACTER VARYING(64) NOT NULL,
-    distance NUMERIC NOT NULL,
-    moving_time CHARACTER VARYING(10) NOT NULL,
-    elapsed_time CHARACTER VARYING(10) NOT NULL,
-    total_elevation_gain NUMERIC,
-    elev_high NUMERIC,
-    elev_low NUMERIC,
-    average_speed NUMERIC,
-    max_speed NUMERIC,
-    average_heartrate NUMERIC,
-    max_heartrate NUMERIC,
-    start_latitude NUMERIC,
-    start_longitude NUMERIC,
-    kudos_count SMALLINT,
-    average_temp CHARACTER VARYING(10),
-    has_heartrate CHARACTER VARYING(10),
-    calories CHARACTER VARYING(10),
-    gear_id CHARACTER VARYING(10)
-);
-"""
-
-# commit table to database
-cur.execute(create_table_query)
-conn.commit()
-
-def execute_batch(conn, df, table, page_size=100):
+def execute_batch(conn, df, table, pk = 'id', page_size=100):
+    # Get all reserved IDs:
+    select_cursor = conn.cursor()
+    ids = []
+    try:
+        qry = "SELECT distinct id FROM " + table + ";"
+        select_cursor.execute(qry)
+        ids = select_cursor.fetchall()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print("Error: %s" % error)
+        conn.rollback()
+        select_cursor.close()
+        return 1
+    # Filter dataframe from reserved IDs:
+    if ids:
+        filter_ids = [item for t in ids for item in t] # convert tupled list
+        df = df[~df[pk].isin(filter_ids)]
+    select_cursor.close()
     """
     Using psycopg2.extras.execute_batch() to insert the dataframe
     """
-    # Create a list of tupples from the dataframe values
+    # Create a list of tuples from the dataframe values
     tuples = [tuple(x) for x in df.to_numpy()]
     # Comma-separated dataframe columns
     cols = ','.join(list(df.columns))
     # SQL query to execute
-    query  = "INSERT INTO %s(%s) VALUES(%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s,%%s)" % (table, cols)
+    query  = "INSERT INTO %s(%s) VALUES(" + ','.join(['%%s']*len(my_activities.columns)) + ")" % (table, cols)
     cursor = conn.cursor()
     try:
         extras.execute_batch(cursor, query, tuples, page_size)
@@ -171,12 +140,17 @@ def execute_batch(conn, df, table, page_size=100):
         cursor.close()
         return 1
     print("execute_batch() done")
-    cursor.close()    
+    cursor.close()
+
+### Execution part ###
+conn = psycopg2.connect(host=host, database=database, user=user, password=password)# create cursor object
+cur = conn.cursor()
 
 
-
-my_activities = get_activities("2020-10-01 00:00:00")
+my_activities = get_activities("2020-08-01 00:00:00")
 execute_batch(conn, my_activities, "activities")
+my_gear = get_gear_names(my_activities)
 
 # close connection to database
 conn.close()
+
