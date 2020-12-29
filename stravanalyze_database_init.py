@@ -46,20 +46,33 @@ CREATE TABLE activities (
 
 create_table_gear_query = """
 CREATE TABLE gear (
-    id BIGINT PRIMARY KEY,
+    id CHARACTER VARYING(64) PRIMARY KEY,
     name CHARACTER VARYING(255) NOT NULL,
     brand_name CHARACTER VARYING(125),
     distance NUMERIC
 );
 """
 
+create_table_kudoers_query = """
+CREATE TABLE kudoers (
+    firstname CHARACTER VARYING(255) NOT NULL,
+    lastname CHARACTER VARYING(12),
+    id BIGINT
+);
+"""
+
+
 # commit tables to database
 cur.execute("DROP TABLE IF EXISTS activities;")
 cur.execute("DROP TABLE IF EXISTS gear;")
+cur.execute("DROP TABLE IF EXISTS kudoers;")
 conn.commit()
 
 cur.execute(create_table_activities_query)
 conn.commit()
 
 cur.execute(create_table_gear_query)
+conn.commit()
+
+cur.execute(create_table_kudoers_query)
 conn.commit()

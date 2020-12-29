@@ -43,7 +43,7 @@ with open('strava_tokens.json') as json_file:
 
 # Loop through all activities
 url = "https://www.strava.com/api/v3/activities"
-access_token = strava_tokens['access_token']
+access_token = api_credentials['access_token']
 
 # Get first page of activities from Strava with all fields
 nacts = 1 # number of activities to fetch
@@ -69,4 +69,8 @@ for thisid in act_ids:
 kudoers_current.to_csv('kudoers_with_activity_id.csv')
 
 
-# Get streaming data
+with open('.secret/api_credentials.json', 'r') as f:
+    api_credentials = json.load(f)
+    client_id = api_credentials['client_id']
+    client_secret = api_credentials['client_secret']
+    refresh_token = api_credentials['refresh_token']

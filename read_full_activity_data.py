@@ -5,10 +5,12 @@ import pandas as pd
 import numpy as np
 import json
 import csv
+import sys
 import requests
 import psycopg2
 import psycopg2.extras as extras
 from stravalib.client import Client
+from stravalib.exc import RateLimitExceeded
 
 client = Client()
 
@@ -39,46 +41,45 @@ client.token_expires_at = api_credentials['expires_at']
 # athlete.to_dict()
 
 
-def get_activities(date_since):
-    mindate = str(datetime.datetime.now())
+def get_activity_summaries(date_since=""):
+    if date_since == "":
+        date_since = str(datetime.datetime.now() - datetime.timedelta(1))
     df_perm = pd.DataFrame() # initialize empty dataframe
 
-    while date_since < mindate:
-        activities = client.get_activities(limit=100)
-        my_cols = ['name',
-                'start_date_local',
-                'start_date',
-                'type',
-                'distance',
-                'moving_time',
-                'elapsed_time',
-                'total_elevation_gain',
-                'elev_high',
-                'elev_low',
-                'average_speed',
-                'max_speed',
-                'average_heartrate',
-                'max_heartrate',
-                'start_latitude',
-                'start_longitude',
-                'kudos_count',
-                'average_temp',
-                'has_heartrate',
-                'calories',
-                'gear_id']
+    activities = client.get_activities(after=date_since)
+    my_cols = ['name',
+            'start_date_local',
+            'start_date',
+            'type',
+            'distance',
+            'moving_time',
+            'elapsed_time',
+            'total_elevation_gain',
+            'elev_high',
+            'elev_low',
+            'average_speed',
+            'max_speed',
+            'average_heartrate',
+            'max_heartrate',
+            'start_latitude',
+            'start_longitude',
+            'kudos_count',
+            'average_temp',
+            'has_heartrate',
+            'calories',
+            'gear_id']
 
-        data = []
-        for activity in activities:
-            my_dict = activity.to_dict()
-            data.append([activity.id]+[my_dict.get(x) for x in my_cols])
+    data = []
+    for activity in activities:
+        my_dict = activity.to_dict()
+        data.append([activity.id]+[my_dict.get(x) for x in my_cols])
 
-        my_cols.insert(0, 'id')
-        df = pd.DataFrame(data, columns=my_cols) # data from this iteration
-        df = df[df['type'] == "Run"]
-        df = df.reset_index(drop=True)
-        df_perm = pd.concat([df_perm, df], axis=0)
-        mindate = min(df_perm['start_date_local'])
-        df_perm = df_perm[df_perm['start_date_local'] > date_since]
+    my_cols.insert(0, 'id')
+    df = pd.DataFrame(data, columns=my_cols) # data from this iteration
+    df = df[df['type'] == "Run"]
+    df = df.reset_index(drop=True)
+    df_perm = pd.concat([df_perm, df], axis=0)
+    df_perm = df_perm[df_perm["moving_time"].notnull()]
     return df_perm
 
 def get_gear_names(activity_meta):
@@ -94,6 +95,63 @@ def get_gear_names(activity_meta):
         df_ret = pd.concat([df_ret, df], axis=0)
     return df_ret
 
+def get_kudoers(activity_meta, rate_limit = 90):
+    act_ids = activity_meta.id
+    df_ret = pd.DataFrame()
+    fields = ['firstname', 'lastname']
+    cnt = 0
+    for thisid in act_ids:
+        try:
+            if cnt >= rate_limit:
+                time.sleep(1000)
+                cnt = 0
+            kudoers = client.get_activity_kudos(thisid)
+            cnt += 1
+            for k in kudoers:
+                df = pd.DataFrame([{fn: getattr(k, fn) for fn in fields}])
+                df['id'] = thisid 
+                df = df.reset_index(drop = True)
+                df_ret = pd.concat([df_ret, df], axis=0)
+        except (Exception, RateLimitExceeded) as x:
+            print("Error: {}".format(x))
+            print("Result might be incomplete")
+            return df_ret
+    return df_ret
+
+def write_db(con, df, table, pk = 'id', page_size=100):
+    # Get all reserved IDs:
+    ids = []
+    with con:
+        with con.cursor() as sc:
+            try:
+                qry = "SELECT distinct {} FROM {} ;".format(pk, table)
+                sc.execute(qry)
+                ids = sc.fetchall()
+                print("Excluded {} id-values from insert.".format(len(ids)))
+            except (Exception, psycopg2.DatabaseError) as error:
+                print("Error: {}".format( error ))
+    # Filter dataframe from reserved IDs:
+    if ids:
+        filter_ids = [item for t in ids for item in t] # convert tupled list
+        df = df[~df[pk].isin(filter_ids)]
+    # Write part
+    # Comma-separated dataframe columns
+    cols = ','.join(list(df.columns))
+    # SQL query to execute
+    placeholder = "VALUES({})".format(','.join(['%s']*len(df.columns)))
+    qry = "INSERT INTO {} ({}) {}".format(table, cols, placeholder)
+    print("Start to insert {} new values:".format(len(df)))
+    with con:
+        with con.cursor() as c:
+            try:
+                extras.execute_batch(c, qry, df.values, page_size)
+                con.commit()
+                print("Success!")
+            except (Exception, psycopg2.DatabaseError) as e:
+                print("Error: {}".format(e))
+                con.rollback()
+
+### Execution part ###
 # database credentials
 with open('.secret/postgres_credentials.json', 'r') as f:
     postgres_credentials = json.load(f)
@@ -102,55 +160,19 @@ with open('.secret/postgres_credentials.json', 'r') as f:
     user = postgres_credentials['user']
     password = postgres_credentials['password']
 
+try:
+    con = psycopg2.connect(host=host, database=database, user=user, password=password)
+except psycopg2.DatabaseError as e:
+    print("Error {}".format(e))
+    sys.exit(1)
 
-def execute_batch(conn, df, table, pk = 'id', page_size=100):
-    # Get all reserved IDs:
-    select_cursor = conn.cursor()
-    ids = []
-    try:
-        qry = "SELECT distinct id FROM " + table + ";"
-        select_cursor.execute(qry)
-        ids = select_cursor.fetchall()
-    except (Exception, psycopg2.DatabaseError) as error:
-        print("Error: %s" % error)
-        conn.rollback()
-        select_cursor.close()
-        return 1
-    # Filter dataframe from reserved IDs:
-    if ids:
-        filter_ids = [item for t in ids for item in t] # convert tupled list
-        df = df[~df[pk].isin(filter_ids)]
-    select_cursor.close()
-    """
-    Using psycopg2.extras.execute_batch() to insert the dataframe
-    """
-    # Create a list of tuples from the dataframe values
-    tuples = [tuple(x) for x in df.to_numpy()]
-    # Comma-separated dataframe columns
-    cols = ','.join(list(df.columns))
-    # SQL query to execute
-    query  = "INSERT INTO %s(%s) VALUES(" + ','.join(['%%s']*len(my_activities.columns)) + ")" % (table, cols)
-    cursor = conn.cursor()
-    try:
-        extras.execute_batch(cursor, query, tuples, page_size)
-        conn.commit()
-    except (Exception, psycopg2.DatabaseError) as error:
-        print("Error: %s" % error)
-        conn.rollback()
-        cursor.close()
-        return 1
-    print("execute_batch() done")
-    cursor.close()
-
-### Execution part ###
-conn = psycopg2.connect(host=host, database=database, user=user, password=password)# create cursor object
-cur = conn.cursor()
-
-
-my_activities = get_activities("2020-08-01 00:00:00")
-execute_batch(conn, my_activities, "activities")
+my_activities = get_activity_summaries("2020-01-01 00:00:00")
+write_db(con, my_activities, "activities")
 my_gear = get_gear_names(my_activities)
+write_db(con, my_gear, "gear")
+my_kudoes = get_kudoers(my_activities)
+write_db(con, my_kudoes, "kudoers")
 
 # close connection to database
-conn.close()
+con.close()
 
