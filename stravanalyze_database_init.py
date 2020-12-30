@@ -36,11 +36,17 @@ CREATE TABLE activities (
     max_heartrate NUMERIC,
     start_latitude NUMERIC,
     start_longitude NUMERIC,
+    start_latlng CHARACTER VARYING(125),
+    end_latlng CHARACTER VARYING(125),
     kudos_count SMALLINT,
     average_temp CHARACTER VARYING(10),
-    has_heartrate CHARACTER VARYING(10),
-    calories CHARACTER VARYING(10),
-    gear_id CHARACTER VARYING(10)
+    has_heartrate BOOLEAN,
+    gear_id CHARACTER VARYING(10),
+    timezone CHARACTER VARYING(125),
+    utc_offset INT,
+    suffer_score INT,
+    photos CHARACTER VARYING(255),
+    workout_type INT
 );
 """
 
@@ -61,11 +67,21 @@ CREATE TABLE kudoers (
 );
 """
 
+create_table_photos_query = """
+CREATE TABLE photos (
+    activity_id BIGINT,
+    unique_id CHARACTER VARYING(255),
+    url CHARACTER VARYING(2048)
+);
+"""
+
 
 # commit tables to database
 cur.execute("DROP TABLE IF EXISTS activities;")
 cur.execute("DROP TABLE IF EXISTS gear;")
 cur.execute("DROP TABLE IF EXISTS kudoers;")
+cur.execute("DROP TABLE IF EXISTS photos;")
+
 conn.commit()
 
 cur.execute(create_table_activities_query)
@@ -75,4 +91,7 @@ cur.execute(create_table_gear_query)
 conn.commit()
 
 cur.execute(create_table_kudoers_query)
+conn.commit()
+
+cur.execute(create_table_photos_query)
 conn.commit()
