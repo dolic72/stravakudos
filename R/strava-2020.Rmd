@@ -1,0 +1,324 @@
+---
+title: "Strava Analysis 2020"
+author: "Dubravko Dolic"
+date: "30 12 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Libraries
+library(rjson)
+library(RPostgres)
+library(RPostgreSQL)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(emojifont)
+library(RColorBrewer)
+library(ggimage)
+library(treemapify)
+
+# Connect to database
+
+db.cred <- fromJSON(file = "c:\\Users\\dubra_dni0\\repos\\stravakudos\\.secret\\postgres_credentials.json")
+
+con <- dbConnect(RPostgres::Postgres(), 
+                 dbname = db.cred$database, 
+                 host = db.cred$host, 
+                 port = 5432, 
+                 user = db.cred$user, 
+                 password = db.cred$password
+                 )
+
+# Get all available data
+
+activities.raw <- dbGetQuery(con, "SELECT * FROM public.activities;")
+kudoers <- dbGetQuery(con, "SELECT * FROM public.kudoers;")
+gear <- dbGetQuery(con, "SELECT * FROM public.gear;")
+photos <- dbGetQuery(con, "SELECT * FROM public.photos;")
+
+# Some data management
+kudoers$fullname <- paste(kudoers$firstname, kudoers$lastname)
+photos$url.str <- photos$url
+
+activities <- data.frame(
+  id = activities.raw$id
+  , name = activities.raw$name
+  , distance = activities.raw$distance
+  , moving_time = activities.raw$moving_time
+  , moving_time_sec = as.numeric(substr(activities.raw$moving_time, 1, 1)) * 60 * 60 +
+    as.numeric(substr(activities.raw$moving_time, 3, 4)) * 60 +
+    as.numeric(substr(activities.raw$moving_time, 6, 7))
+  , average_pace = 16.66666667/activities.raw$average_speed
+  , average_pace_str = paste0(floor(16.66666667/activities.raw$average_speed), ":", 
+                              formatC(round((16.66666667/activities.raw$average_speed - 
+                                               floor(16.66666667/activities.raw$average_speed)) * 60, 0), 
+                                      width = 2, flag = "0"))
+  , average_speed = activities.raw$average_speed
+  , max_speed = activities.raw$max_speed
+  , gear_id = activities.raw$gear_id
+  , suffer_score = activities.raw$suffer_score
+  , start_date_local = as.POSIXct(activities.raw$start_date_local)
+  , kudos_count = activities.raw$kudos_count
+  , datum = as.Date(as.POSIXct(activities.raw$start_date_local))
+  , tag = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%a"),
+                 levels = c("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"))
+  , monat = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%b"),
+                   levels = format(seq(as.Date("2015-01-01"), as.Date("2015-12-31"),
+                                       "month"), "%b"))
+  , jahr = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%Y"))
+  , woche = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%W")) ## ISO-Norm Wochen
+  , kw = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%W%y"),
+              levels = format(seq(min(as.Date(as.POSIXct(activities.raw$start_date_local)), na.rm = T), 
+                                  max(as.Date(as.POSIXct(activities.raw$start_date_local)), na.rm = T), "week"),
+                              "%W%y"))
+  , doy = format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%j")
+)
+
+# Add number of photos to activities
+n.photos <- photos %>% 
+  group_by(activity_id) %>% 
+  summarise(n.photos = n_distinct(url.str))
+
+activities <- activities %>% 
+  left_join(n.photos, by = c("id" = "activity_id")) %>% 
+  replace_na(list(n.photos = 0))
+
+# Add gear Names to activities
+activities <- gear %>%
+  select(-distance) %>% 
+  rename(gear_brand_name = brand_name, shoe = name, gear_id = id) %>% 
+  right_join(activities, by = c("gear_id" = "gear_id"))
+
+
+# A merged dataset for kudoes and activities
+d <- merge(activities, kudoers, by = "id")
+
+
+```
+
+# Running 2020 - all runs summary
+
+The following visualizations are done with data from [Strava](https://www.strava.com/dashboard). Although Strava itself already allows a good deal of analyses I was curious what else could be done. So I checked out the API and here we are. 
+
+
+## Kudoers
+
+Let's have a look at the most exiting category: *Kudos*. These little somethings light up our days after a run. It can be a second reward for a run - apart from the run itself. So let's have a closer look.
+
+### Number of kudoes and kudoers
+
+
+```{r kudoers}
+n.kudoes <- dim(kudoers)[1]
+n.kudoer <- length(unique(kudoers$fullname))
+runs.wo.kudos <- table(activities$kudos_count)["0"]
+runs.w.kudos <- length(activities$kudos_count[activities$kudos_count > 0])
+md.kudos <- median(activities$kudos_count)
+mn.kudos <- mean(activities$kudos_count)
+mx.kudos <- max(names(table(activities$kudos_count)))
+
+# Very cool solution for boxes: 
+# https://stackoverflow.com/questions/47105282/valuebox-like-function-for-static-reports
+
+df <- data.frame(
+    x = rep(seq(2, 15, 6.5), 2),
+    y = c(rep(6.5, 3), rep(2,3)),
+    h = rep(4.25, 6),
+    w = rep(6.25, 6),
+    value = c(paste(n.kudoes),
+             paste(n.kudoer),
+             paste(runs.w.kudos),
+             paste(md.kudos),
+             paste(round(mn.kudos, 2)),
+             paste(mx.kudos)),
+    info = c("Number of kudoes",
+             "Number of kudoer",
+             "Runs with kudoes",
+             "Median of kudoes per run",
+             "Mean of kudoes per run",
+             "Run with most kudoes"),
+    shape = c(fontawesome(c("fa-thumbs-up", "fa-users", "fa-flag-checkered",
+                            "fa-balance-scale")), 
+              emoji(c("straight_ruler", "athletic_shoe"))),
+    font_family = c(rep("fontawesome-webfont", 4),
+                    rep("EmojiOne", 2)),
+    color = factor(1:6)
+)
+
+
+ggplot(df, aes(x, y, height = h, width = w, label = info)) +
+    geom_tile(aes(fill = color)) +
+    geom_text(color = "white", fontface = "bold", size = 10,
+              aes(label = value, x = x - 2.9, y = y + 1), hjust = 0) +
+    geom_text(color = "white", fontface = "bold",
+              aes(label = info, x = x - 2.9, y = y - 1), hjust = 0) +
+    coord_fixed() +
+    scale_fill_brewer(type = "qual", palette = "Set2") +
+    geom_text(size = 20, aes(label = shape, family = font_family,
+                             x = x + 1.5, y = y + 0.5), alpha = 0.25) +
+    theme_void() +
+    guides(fill = FALSE)
+
+
+ggplot(activities, aes(kudos_count)) + 
+  geom_bar(fill = "#f5a105") +
+  theme_minimal() +
+  labs(title = "Number of kudoes per run", x = "Number of kudoes", y = "Number of runs")
+
+
+```
+
+So, not a vast amount of kudoers but a very nice number of kudoes recieved already. Happy about that and thankful for this huge amount of motivation. 
+
+Now let's see what I could do to receive more kudos next year. What is it that drives the number of kudoes? Is it the distance I do? Maybe the duration? Or do I have to be real fast?
+
+```{r distance duration}
+
+ggplot(activities, aes(factor(kudos_count), distance/1000)) + 
+  geom_boxplot(fill = "#f5a105") + 
+  theme_minimal() + 
+  labs(title = "Length of runs by number of kudoes", x = "Number of kudoes", y = "Length of run (km)")
+
+ggplot(activities, aes(factor(kudos_count), moving_time_sec/3600)) + 
+  geom_boxplot(fill = "#f5a105") +
+  theme_minimal() + 
+  labs(title = "Duration of runs by number of kudoes", x = "Number of kudoes", y = "Duration of run (hours)")
+
+ggplot(activities, aes(factor(kudos_count), average_pace)) + 
+  geom_boxplot(fill = "#f5a105") +
+  theme_minimal() + 
+  labs(title = "Pace by runs by number of kudoes", 
+       x = "Number of kudoes", 
+       y = "Duration of run (hours)")
+
+activities %>% 
+  group_by(tag) %>% 
+  summarise(cnt.runs = n(), 
+            sum.kudos = sum(kudos_count),
+            kudos.per.run = sum(kudos_count)/n()) %>% 
+  ggplot(aes(factor(tag), kudos.per.run)) + 
+  geom_bar(stat="identity", fill = "#f5a105") +
+  theme_bw() +
+  labs(title = "Number of Kudos by day", x = "", y = "Number of Kudoes")
+
+
+```
+
+While Distance and duration seem to trigger my followers pace doesn't. Also the day seems to be without any influence although on Saturdays everyone seems to have more time for leaving a thumbs-up. Overall it looks like this:
+
+```{r scatter kudoer}
+
+ggplot(activities, aes(distance/1000, moving_time_sec/3600, color = kudos_count)) +
+  geom_point() +
+  theme_minimal() +
+  scale_color_continuous(name="Number of kudoes") +
+  labs(title = "Distance by duration colored by number of kudos", x = "Distance (km)", y = "Duration (hours)")
+
+```
+
+
+Now here is the most exiting chart: who is doing the best job as motivator? The answer is...
+
+```{r topten}
+
+
+# Top ten with images:
+top.ten <- d %>% 
+  group_by(fullname) %>% 
+  summarise(n = n()) %>% 
+  arrange(desc(n)) %>%
+  ungroup() %>%
+  mutate(Name = reorder(fullname, n)) %>%
+  head(10)
+
+## Image of kudoers
+img.src <- c(
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/33448821/14362597/1/medium.jpg",
+  "https://graph.facebook.com/10157239268009098/picture?height=256&width=256",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/5232942/2746916/4/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/16295153/5009802/12/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/37700411/11087097/3/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/10826705/3273402/8/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/29625014/8890577/3/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/1257681/831497/2/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/51773560/13797523/1/medium.jpg",
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/12337737/3695515/7/medium.jpg"
+)
+
+kudoer.img <- data.frame(Name = top.ten$fullname, img.src = img.src)
+
+top.ten <- merge(top.ten, kudoer.img)
+
+ggplot(top.ten, aes(Name, n)) + 
+  geom_bar(stat="identity", colour="white", fill = "#f5a105") + 
+  geom_text(aes(x = Name, y = 1, label = paste0("(", n, ")")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  geom_image(aes(image = img.src), asp = 1.5) +
+  labs(x = 'Name of Kudoer', 
+       y = 'Count', 
+       title = 'My top Kudoers 2020') +
+  coord_flip() +
+  theme_bw()
+
+```
+
+## Gear effect?
+
+```{r gear}
+
+ggplot(activities, aes(factor(shoe), moving_time_sec/3600)) + 
+  geom_boxplot(fill = "#f5a105") +
+  theme_minimal() + 
+  coord_flip() +
+  labs(title = "Duration of runs by shoe used", x = "Shoe name", y = "Duration of run (hours)")
+
+
+# Top five by count with images:
+top.gear <- activities %>% 
+  group_by(shoe, gear_brand_name) %>% 
+  summarise(n = n(), 
+            dist = sum(distance)/1000, 
+            pace = mean(average_pace),
+            longest_run = max(distance)/1000) %>% 
+  arrange(desc(n)) %>%
+  ungroup() %>%
+  mutate(Name = reorder(shoe, n), 
+         Label = paste0(shoe, "\n(", n, ")"), 
+         Label_short = paste0(gear_brand_name, "\n(", n, ")")) %>%
+  head(5)
+
+
+## Image of gear
+img.src <- paste0("../img/", c(
+  "cloud-ico.png",
+  "adidas-ico.png",
+  "saucony-ico.png",
+  "brooks-ico.png",
+  "hoka-ico.png"))
+
+top.gear.img <- data.frame(Name = top.gear$Name, img.src = img.src)
+
+top.gear <- merge(top.gear, top.gear.img)
+
+ggplot(top.gear, aes(fill = Name, area = n, label = Label)) +
+  geom_treemap() + 
+  geom_treemap_text(colour = "white", place = "centre") +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Shoes: Frequency of wear")
+
+
+ggplot(top.gear, aes(dist, pace)) +
+  geom_bgimage("../img/laeufer.png") +
+  geom_segment(aes(x = dist, y = min(pace), xend = dist, yend = pace)) +
+  geom_image(aes(image = img.src), asp = 1.5) +
+  geom_text(aes(x = dist, y = (pace *1.005), label = Label_short)) +
+  theme_minimal() +
+  labs(title = "Shoes by Distance and Pace", x = "Distance (km)", y = "Pace (min/km)")
+
+
+```
