@@ -2,7 +2,9 @@
 title: "Strava Analysis 2020"
 author: "Dubravko Dolic"
 date: "30 12 2020"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -19,6 +21,10 @@ library(emojifont)
 library(RColorBrewer)
 library(ggimage)
 library(treemapify)
+library(ggridges)
+library(viridis)
+library(hrbrthemes)
+
 
 # Connect to database
 
@@ -38,6 +44,10 @@ activities.raw <- dbGetQuery(con, "SELECT * FROM public.activities;")
 kudoers <- dbGetQuery(con, "SELECT * FROM public.kudoers;")
 gear <- dbGetQuery(con, "SELECT * FROM public.gear;")
 photos <- dbGetQuery(con, "SELECT * FROM public.photos;")
+
+# One wrong run needs to be corrected
+activities.raw[activities.raw$id == 3487007166, "moving_time"] <- "0:50:53"
+activities.raw[activities.raw$id == 3487007166, "average_speed"] <- 8556/3053
 
 # Some data management
 kudoers$fullname <- paste(kudoers$firstname, kudoers$lastname)
@@ -60,21 +70,31 @@ activities <- data.frame(
   , max_speed = activities.raw$max_speed
   , gear_id = activities.raw$gear_id
   , suffer_score = activities.raw$suffer_score
-  , start_date_local = as.POSIXct(activities.raw$start_date_local)
+  , start_date_local = as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin")
   , kudos_count = activities.raw$kudos_count
-  , datum = as.Date(as.POSIXct(activities.raw$start_date_local))
-  , tag = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%a"),
+  , datum = as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin"), tz = "Europe/Berlin")
+  , tag = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin")
+                                , tz = "Europe/Berlin"), "%a"),
                  levels = c("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"))
-  , monat = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%b"),
-                   levels = format(seq(as.Date("2015-01-01"), as.Date("2015-12-31"),
+  , monat = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin"), 
+                                  tz = "Europe/Berlin"), "%b"),
+                   levels = format(seq(as.Date("2020-01-01"), as.Date("2020-12-31"),
                                        "month"), "%b"))
-  , jahr = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%Y"))
-  , woche = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%W")) ## ISO-Norm Wochen
-  , kw = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%W%y"),
-              levels = format(seq(min(as.Date(as.POSIXct(activities.raw$start_date_local)), na.rm = T), 
-                                  max(as.Date(as.POSIXct(activities.raw$start_date_local)), na.rm = T), "week"),
-                              "%W%y"))
-  , doy = format(as.Date(as.POSIXct(activities.raw$start_date_local)), "%j")
+  , jahr = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin"), 
+                                 tz = "Europe/Berlin"), "%Y"))
+  , woche = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin"), 
+                                  tz = "Europe/Berlin"), "%W")) ## ISO-Norm Wochen
+  , kw = factor(format(as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin"), 
+                               tz = "Europe/Berlin"), "%W%y"),
+              levels = format(seq(min(as.Date(as.POSIXct(activities.raw$start_date_local, 
+                                                         tz = "Europe/Berlin"), tz = "Europe/Berlin"), na.rm = T), 
+                                  max(as.Date(as.POSIXct(activities.raw$start_date_local, 
+                                                         tz = "Europe/Berlin"), tz = "Europe/Berlin"), 
+                                      na.rm = T), "week"), "%W%y"))
+  , doy = format(as.Date(as.POSIXct(activities.raw$start_date_local, tz = "Europe/Berlin"), 
+                         tz = "Europe/Berlin"), "%j")
+  , distance_cat = cut(activities.raw$distance, breaks = c(0, 7000, 10000, 12000, 15000, Inf), 
+                       labels = c("< 7", "7-10", "10-12", "12-15", "> 15"))
 )
 
 # Add number of photos to activities
@@ -97,6 +117,8 @@ activities <- gear %>%
 d <- merge(activities, kudoers, by = "id")
 
 
+myorange = "#f5a105"
+
 ```
 
 # Running 2020 - all runs summary
@@ -108,7 +130,7 @@ The following visualizations are done with data from [Strava](https://www.strava
 
 Let's have a look at the most exiting category: *Kudos*. These little somethings light up our days after a run. It can be a second reward for a run - apart from the run itself. So let's have a closer look.
 
-### Number of kudoes and kudoers
+### Number of kudos and kudoers
 
 
 ```{r kudoers}
@@ -245,7 +267,7 @@ img.src <- c(
   "https://dgalywyr863hv.cloudfront.net/pictures/athletes/29625014/8890577/3/medium.jpg",
   "https://dgalywyr863hv.cloudfront.net/pictures/athletes/1257681/831497/2/medium.jpg",
   "https://dgalywyr863hv.cloudfront.net/pictures/athletes/51773560/13797523/1/medium.jpg",
-  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/12337737/3695515/7/medium.jpg"
+  "https://dgalywyr863hv.cloudfront.net/pictures/athletes/12337737/3695515/9/medium.jpg"
 )
 
 kudoer.img <- data.frame(Name = top.ten$fullname, img.src = img.src)
@@ -266,7 +288,10 @@ ggplot(top.ten, aes(Name, n)) +
 
 ```
 
-## Gear effect?
+## My shoes
+
+Clearly shoes are the most import gear for every runner. So I have a closer look on my gear. While Strava allows me to track the mileage of each shoe, I was interested on other parameters like speed, frequency of wear and duration.
+
 
 ```{r gear}
 
@@ -313,12 +338,208 @@ ggplot(top.gear, aes(fill = Name, area = n, label = Label)) +
 
 
 ggplot(top.gear, aes(dist, pace)) +
-  geom_bgimage("../img/laeufer.png") +
   geom_segment(aes(x = dist, y = min(pace), xend = dist, yend = pace)) +
   geom_image(aes(image = img.src), asp = 1.5) +
-  geom_text(aes(x = dist, y = (pace *1.005), label = Label_short)) +
+  geom_bgimage("../img/laeufer.png") +
+  geom_text(aes(x = dist, y = (max(pace) * 1.007), label = gsub("[\n]", " ", Label_short)), 
+            size = 3, hjust = 1) +
+  coord_flip() +
   theme_minimal() +
   labs(title = "Shoes by Distance and Pace", x = "Distance (km)", y = "Pace (min/km)")
 
 
+
+
+
 ```
+
+While my Hoka ONE ONE are giving me pace the ON shoes were my most frequently used one. Actually I was a little bit astonished because the usage was less than I expected. 
+
+## Suffer Score
+
+```{r suffer}
+
+activities %>% 
+  filter(suffer_score > 0) %>% 
+  ggplot(aes(monat, suffer_score)) + 
+  geom_boxplot(fill = myorange) +
+  theme_minimal() +
+  labs(title = "Suffer Score by Month", x = "Month", y = "Suffer Score")
+
+activities %>% 
+  filter(suffer_score > 0) %>% 
+  ggplot(aes(tag, distance_cat, fill = suffer_score)) +
+  geom_tile() +
+  theme_minimal() +
+  labs(title = "Suffer Score by Day of the week and Distance", 
+       x = "Day of the week", 
+       y = "Distance (km)")
+
+
+
+```
+
+## Runs
+
+
+```{r runs}
+
+ggplot(activities, aes(distance/1000)) + 
+  geom_histogram(binwidth = .5, fill = myorange) +
+  theme_minimal() +
+  labs(title = "Distribution of length", x = "Distance (km)", y = "")
+
+
+ggplot(activities, aes(moving_time_sec/60)) + 
+  geom_histogram(binwidth = 1, fill = myorange) +
+  theme_minimal() +
+  labs(title = "Distribution of duration", x = "Time (minutes)", y = "")
+
+ggplot(activities, aes(moving_time_sec/60, tag)) + 
+  geom_boxplot(fill = myorange) +
+  theme_minimal() +
+  labs(title = "Length of runs by day", x = "Duration (minutes)", y = "")
+
+
+ggplot(activities, aes(average_pace, tag, label = average_pace_str)) + 
+  geom_boxplot(fill = myorange) +
+  theme_minimal() +
+  labs(title = "Pace by day", x = "Pace (km/min)", y = "")
+
+ann <- rbind(
+  mx.pace <- activities %>% 
+    select(datum, average_pace, average_pace_str) %>% 
+    filter(average_pace == max(average_pace)),
+  mn.pace <- activities %>% 
+    select(datum, average_pace, average_pace_str) %>% 
+    filter(average_pace == min(average_pace))
+)
+
+ggplot(activities, aes(datum, average_pace)) +
+  geom_line(aes(colour = average_pace)) +
+  scale_color_gradient(low = "green", high = "red", name = "Pace") +
+  geom_smooth() +
+  annotate("text", ann$datum, ann$average_pace, label = ann$average_pace_str) +
+  theme_minimal() +
+  labs(title = "Pace by day", y = "Pace (km/min)", x = "")
+
+ggplot(activities, aes(seq(1:dim(activities)[1]), cumsum(distance/1000))) + 
+  geom_bar(stat = "identity", fill = myorange) +
+  geom_abline(slope = sum(activities$distance/1000)/dim(activities)[1]) +
+  theme_minimal() +
+  labs(title = "Distance growth", y = "km", x = "")
+
+# Runs with deviation from mean
+m <- mean(activities$average_pace, na.rm = T)
+s <- sd(activities$average_pace, na.rm = T)
+n <- length(activities$average_pace)
+error <- qt(0.95, df = n-1)*s/sqrt(n)
+
+require(data.table)
+thisdata <- as.data.table(activities)
+thisdata <- thisdata[ , mn := mean(average_pace, na.rm = T), by = monat]
+thisdata$bpcol <- cut(thisdata$mn, 
+                      breaks = c(0, m-error, m+error, max(thisdata$mn, na.rm = T)), 
+                      labels = c("lower", "same", "higher"))
+
+ggplot(thisdata, aes(monat, average_pace)) + 
+  geom_boxplot(aes(fill = bpcol)) +
+  scale_fill_brewer(palette="Pastel2") +
+  theme_minimal() +
+  ylim(8,5) +
+  labs(title = "Pace by month (with deviation from mean)", x = "", y = "Pace (min/km)", fill = "...than average")
+
+# Ridge pace
+ggplot(activities, aes(x = average_pace, y = monat, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "Pace (min/km)", option = "C") +
+  labs(title = 'Pace (Min/km) by month', x = "", y = "") +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+
+
+# Pace per week by BP
+ggplot(activities, aes(woche, average_pace)) + 
+  geom_boxplot(fill = myorange) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ylim(8, 5) +
+  labs(title = "Pace by week", y = "Pace (km/min)", x = "Week of the year")
+
+
+# Runs per week
+ggplot(activities, aes(woche)) +
+  geom_bar(fill = myorange) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Runs per week", y = "Frequency", x = "Week of the year")
+
+
+# Density pace
+ggplot(activities, aes(x = average_pace, y = ..density..)) +
+  geom_histogram(fill = myorange, colour = "grey60", size = .2, binwidth = 0.08) +
+  geom_density() +
+  theme_minimal() +
+  labs(title = "Distribution of pace", y = "Density", x = "Pace (min/km)")
+
+
+ggplot(activities, aes(x = average_pace, y = ..density..)) +
+  geom_histogram(fill = myorange, colour = "grey60", size = .2, binwidth = 0.08) +
+  geom_density() +
+  theme_minimal() +
+  facet_wrap(~ distance_cat) +
+  labs(title = "Distribution of pace", y = "Density", x = "Pace (min/km)")
+
+
+activities %>% 
+  group_by(tag) %>% 
+  summarise(n = n()) %>% 
+  ggplot(aes(tag, n)) +
+  geom_bar(stat = 'identity', fill = myorange) +
+  theme_minimal() +
+  labs(title = "Number of runs by day of the week", y = "Frequency", x = "")
+
+# All days of the year:
+
+ds <- seq(as.Date("2020-01-01"), as.Date("2020-12-31"), "day")
+all.days <- data.frame(
+  datum = ds,
+  monat = factor(format(ds, "%B"), levels = format(seq(as.Date("2020-01-01"), as.Date("2020-12-31"), "month"), "%B")),
+  tag = factor(format(ds, "%a"), levels = c("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")),
+  woche = factor(format(ds, "%W")),
+  dom = factor(format(ds, "%e"))
+)
+
+run.days <- activities %>% 
+  select(datum, distance) %>% 
+  right_join(all.days, by = c("datum" = "datum")) %>% 
+  replace_na(list(distance=0)) %>% 
+  mutate(run = case_when(distance == 0 ~ 0, distance > 0 ~ 1)) %>% 
+  arrange(datum)
+
+ggplot(run.days, aes(dom, monat, fill = factor(run))) + 
+  geom_tile() +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  guides(fill=FALSE) +
+  scale_fill_manual(values = c("black", myorange)) +
+  labs(title = "RUNRUNRUN", y = "", x = "")
+
+
+ggplot(run.days, aes(dom, monat, fill = distance)) + 
+  geom_tile() +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  guides(fill=FALSE) +
+  scale_fill_gradient(low = "black", high = myorange) +
+  labs(title = "RUNRUNRUN", y = "", x = "")
+
+
+
+
+```
+

@@ -38,7 +38,7 @@ access_token = api_credentials['access_token']
 url = client.authorization_url(client_id=client_id, redirect_uri='http://127.0.0.1:5000/authorization', scope=['read_all','profile:read_all','activity:read_all'] )
 urllib.parse.unquote(url)
 # Code copied from url result:
-code = "0644dca0cd13028a48ce5df1d8f1aac0870fc680"
+code = "5259422f78c750ca364b60e467c8658407828f4f"
 access_token = client.exchange_code_for_token(
     client_id = client_id, 
     client_secret = client_secret, 
