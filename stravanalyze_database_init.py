@@ -44,7 +44,7 @@ CREATE TABLE activities (
     gear_id CHARACTER VARYING(10),
     timezone CHARACTER VARYING(125),
     utc_offset INT,
-    suffer_score INT,
+    suffer_score NUMERIC,
     photos CHARACTER VARYING(255),
     workout_type INT
 );

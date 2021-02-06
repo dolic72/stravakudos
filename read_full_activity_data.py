@@ -87,8 +87,8 @@ def get_activity_summaries(date_since=""):
     df_perm = pd.concat([df_perm, df], axis=0)
     # Some "repair" stuff:
     df_perm = df_perm[df_perm["moving_time"].notnull()]
-    df["suffer_score"] = df["suffer_score"].fillna(0)
-    df["workout_type"] = df["workout_type"].fillna(0)
+    df["suffer_score"] = df["suffer_score"].fillna(0, inplace=True)
+    df["workout_type"] = df["workout_type"].fillna(0, inplace=True)
     return df_perm
 
 def get_gear_names(activity_meta):
@@ -207,7 +207,7 @@ except psycopg2.DatabaseError as e:
     print("Error {}".format(e))
     sys.exit(1)
 
-my_activities = get_activity_summaries("2020-01-01 00:00:00")
+my_activities = get_activity_summaries("2019-10-01 00:00:00")
 write_db(con, my_activities, "activities")
 my_gear = get_gear_names(my_activities)
 write_db(con, my_gear, "gear")
